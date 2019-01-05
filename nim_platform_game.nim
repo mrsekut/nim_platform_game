@@ -8,6 +8,7 @@ type
     renderer: RendererPtr
 
 proc newGame(renderer: RendererPtr): Game =
+  # TODO:
   new result
   result.renderer = renderer
 
@@ -21,22 +22,19 @@ proc toInput(key: Scancode): Input =
   else: Input.none
 
 proc handleInput(game: Game) =
+  # TODO:
   var event = defaultEvent
   while pollEvent(event):
     case event.kind
-    of QuitEvent:
-      game.inputs[Input.quit] = true
-    of KeyDown:
-      game.inputs[event.key.keysym.scancode.toInput] = true
-    of KeyUp:
-      game.inputs[event.key.keysym.scancode.toInput] = false
-    else:
-      discard
+    of QuitEvent: game.inputs[Input.quit] = true
+    of KeyDown: game.inputs[event.key.keysym.scancode.toInput] = true
+    of KeyUp: game.inputs[event.key.keysym.scancode.toInput] = false
+    else: discard
 
 proc render(game: Game) =
+  # TODO:
   game.renderer.clear()
   game.renderer.present()
-
 
 
 type SDLException = object of Exception
@@ -65,7 +63,6 @@ proc main =
   sdlFailIf renderer.isNil: "Renderer could not be created"
   defer: renderer.destroy()
 
-  # Set the default color to use for drawing
   renderer.setDrawColor(r = 110, g = 132, b = 174)
 
   var game = newGame(renderer)
