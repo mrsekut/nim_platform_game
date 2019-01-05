@@ -7,5 +7,5 @@ license       = "MIT"
 srcDir        = "src"
 
 # Dependencies
-
+requires "sdl2"
 requires "nim >= 0.18.0"
