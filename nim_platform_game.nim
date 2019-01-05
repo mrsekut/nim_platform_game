@@ -1,5 +1,44 @@
 import sdl2
 
+type
+  Input {.pure.} = enum none, left, right, jump, restart, quit
+
+  Game = ref object
+    inputs: array[Input, bool]
+    renderer: RendererPtr
+
+proc newGame(renderer: RendererPtr): Game =
+  new result
+  result.renderer = renderer
+
+proc toInput(key: Scancode): Input =
+  case key
+  of SDL_SCANCODE_A: Input.left
+  of SDL_SCANCODE_D: Input.right
+  of SDL_SCANCODE_SPACE: Input.jump
+  of SDL_SCANCODE_R: Input.restart
+  of SDL_SCANCODE_Q: Input.quit
+  else: Input.none
+
+proc handleInput(game: Game) =
+  var event = defaultEvent
+  while pollEvent(event):
+    case event.kind
+    of QuitEvent:
+      game.inputs[Input.quit] = true
+    of KeyDown:
+      game.inputs[event.key.keysym.scancode.toInput] = true
+    of KeyUp:
+      game.inputs[event.key.keysym.scancode.toInput] = false
+    else:
+      discard
+
+proc render(game: Game) =
+  game.renderer.clear()
+  game.renderer.present()
+
+
+
 type SDLException = object of Exception
 
 template sdlFailIf(cond: typed, reason: string) =
@@ -29,12 +68,10 @@ proc main =
   # Set the default color to use for drawing
   renderer.setDrawColor(r = 110, g = 132, b = 174)
 
-  # Game loop, draws each frame
-  while true:
-    # Draw over all drawings of the last frame with the default
-    # color
-    renderer.clear()
-    # Show the result on screen
-    renderer.present()
+  var game = newGame(renderer)
+
+  while not game.inputs[Input.quit]:
+    game.handleInput()
+    game.render()
 
 main()
