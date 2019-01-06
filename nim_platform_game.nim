@@ -128,6 +128,7 @@ proc render(game: Game) =
 
 const
   playerSize = vector2d(64, 64)
+  windowSize: Point = (1280.cint, 720.cint)
 
   air = 0
   start = 78
@@ -198,6 +199,15 @@ proc moveBox(map: Map, pos: var Point2d, vel: var Vector2d, size: Vector2d): set
 
     pos = newPos
 
+proc moveCamera(game: Game) =
+  const halfWin = float(windowSize.x div 2)
+  let
+    leftArea = game.player.pos.x - halfWin - 100
+    rightArea = game.player.pos.x - halfWin + 100
+
+  game.camera.x = clamp(game.camera.x, leftArea, rightArea)
+
+
 proc physics(game: Game) =
   if game.inputs[Input.restart]:
     game.player.restartPlayer()
@@ -255,6 +265,7 @@ proc main =
     let newTick = int((epochTime() - startTime) * 50)
     for tick in lastTick+1..newTick:
       game.physics()
+      game.moveCamera()
     lastTick = newTick
 
     game.render()
