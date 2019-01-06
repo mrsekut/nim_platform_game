@@ -103,8 +103,8 @@ proc renderMap(renderer: RendererPtr, map: Map, camera: Vector2d) =
 
 proc toInput(key: Scancode): Input =
   case key
-  of SDL_SCANCODE_L: Input.left
-  of SDL_SCANCODE_H: Input.right
+  of SDL_SCANCODE_H: Input.left
+  of SDL_SCANCODE_L: Input.right
   of SDL_SCANCODE_SPACE: Input.jump
   of SDL_SCANCODE_R: Input.restart
   of SDL_SCANCODE_Q: Input.quit
