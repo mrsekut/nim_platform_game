@@ -1,10 +1,14 @@
+# TODO: 左右の動き、vimに合わせよう
+
 import sdl2
 import sdl2.image
 import basic2d
-import strutils, strformat, times
+import strutils, strformat, times, math
 
 type
+  SDLException = object of Exception
   Input {.pure.} = enum none, left, right, jump, restart, quit
+  Collision {.pure.} = enum x, y, corner
 
   Player = ref object
     texture: TexturePtr
@@ -97,18 +101,10 @@ proc renderMap(renderer: RendererPtr, map: Map, camera: Vector2d) =
 
     renderer.copy(map.texture, unsafeAddr clip, unsafeAddr dest)
 
-
-
-
-
-
-
-
-
 proc toInput(key: Scancode): Input =
   case key
-  of SDL_SCANCODE_A: Input.left
-  of SDL_SCANCODE_D: Input.right
+  of SDL_SCANCODE_L: Input.left
+  of SDL_SCANCODE_H: Input.right
   of SDL_SCANCODE_SPACE: Input.jump
   of SDL_SCANCODE_R: Input.restart
   of SDL_SCANCODE_Q: Input.quit
@@ -130,24 +126,98 @@ proc render(game: Game) =
   game.renderer.renderMap(game.map, game.camera)
   game.renderer.present()
 
-type SDLException = object of Exception
+const
+  playerSize = vector2d(64, 64)
+
+  air = 0
+  start = 78
+  finish = 110
 
 template sdlFailIf(cond: typed, reason: string) =
   if cond: raise SDLException.newException(
     reason & ", SDL error: " & $getError())
 
+proc getTile(map: Map, x, y: int): uint8 =
+  let
+    nx = clamp(x div tileSize.x, 0, map.width-1)
+    ny = clamp(y div tileSize.y, 0, map.height-1)
+    pos = ny * map.width + nx
+
+  map.tiles[pos]
+
+proc isSolid(map: Map, x, y: int): bool =
+  map.getTile(x, y) notin {air, start, finish}
+
+proc isSolid(map: Map, point: Point2d): bool =
+  map.isSolid(point.x.round.int, point.y.round.int)
+
+proc onGround(map: Map, pos: Point2d, size: Vector2d): bool =
+  let size = size * 0.5
+  result = map.isSolid(point2d(pos.x - size.x, pos.y + size.y + 1)) or
+           map.isSolid(point2d(pos.x + size.x, pos.y + size.y + 1))
+
+proc testBox(map: Map, pos: Point2d, size: Vector2d): bool =
+  let size = size * 0.5
+  result = map.isSolid(point2d(pos.x - size.x, pos.y - size.y)) or
+           map.isSolid(point2d(pos.x + size.x, pos.y - size.y)) or
+           map.isSolid(point2d(pos.x - size.x, pos.y + size.y)) or
+           map.isSolid(point2d(pos.x + size.x, pos.y + size.y))
+
+proc moveBox(map: Map, pos: var Point2d, vel: var Vector2d, size: Vector2d): set[Collision] {.discardable.} =
+  # TODO:
+  let
+    distance = vel.len
+    maximum = distance.int
+
+  if distance < 0: return
+
+  let fraction = 1.0 / float(maximum + 1)
+
+  for i in 0..maximum:
+    var newPos = pos + vel * fraction
+
+    if map.testBox(newPos, size):
+      var hit = false
+
+      if map.testBox(point2d(pos.x, newPos.y), size):
+        result.incl Collision.y
+        newPos.y = pos.y
+        vel.y = 0
+        hit = true
+
+      if map.testBox(point2d(newPos.x, pos.y), size):
+        result.incl Collision.x
+        newPos.x = pos.x
+        vel.x = 0
+        hit = true
+
+      if not hit:
+        result.incl Collision.corner
+        newPos = pos
+        vel = vector2d(0, 0)
+
+    pos = newPos
+
 proc physics(game: Game) =
   if game.inputs[Input.restart]:
     game.player.restartPlayer()
 
+  let ground = game.map.onGround(game.player.pos, playerSize)
+
   if game.inputs[Input.jump]:
-    game.player.vel.y = -21
+    if ground:
+      game.player.vel.y = -21
 
   let direction = float(game.inputs[Input.right].int - game.inputs[Input.left].int)
 
   game.player.vel.y += 0.75
+  if ground:
+    game.player.vel.x = 0.5 * game.player.vel.x + 2.0 * direction
+  else:
+    game.player.vel.x = 0.95 * game.player.vel.x + 2.0 * direction
+
   game.player.vel.x = clamp(0.5 * game.player.vel.x + 4.0 * direction, -8, 8)
-  game.player.pos += game.player.vel
+  game.map.moveBox(game.player.pos, game.player.vel, playerSize)
 
 proc main =
   sdlFailIf(not sdl2.init(INIT_VIDEO or INIT_TIMER or INIT_EVENTS)):
