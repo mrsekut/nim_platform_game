@@ -29,6 +29,17 @@ type
   Time = ref object
     begin, finish, best: int
 
+  CacheLine = object
+    texture: TexturePtr
+    w, h: cint
+
+  TextCache = ref object
+    text: string
+    cache: array[2, CacheLine]
+
+proc newTextCache: TextCache =
+  new result
+
 proc formatTime(ticks: int): string =
   let
     mins = (ticks div 50) div 60
@@ -147,28 +158,38 @@ proc handleInput(game: Game) =
     of KeyUp: game.inputs[event.key.keysym.scancode.toInput] = false
     else: discard
 
-proc renderText(renderer: RendererPtr, font: FontPtr, text: string, x, y, outline: cint, color: Color) =
+template rendertextCached(game: Game, text: string, x, y: cint, color: Color) =
+  block:
+    var tc {.global.} = newTextCache()
+    game.renderText(text, x, y, color, tc)
+
+proc renderText(renderer: RendererPtr, font: FontPtr, text: string, x, y, outline: cint, color: Color): CacheLine =
   font.setFontOutline(outline)
   let surface = font.renderUtf8Blended(text.cstring, color)
   sdlFailIf surface.isNil: "Could not render text surface"
 
   discard surface.setSurfaceAlphaMod(color.a)
 
-  var
-    source = rect(0, 0, surface.w, surface.h)
-    dest = rect(x, y, surface.w, surface.h)
-  let texture = renderer.createTextureFromSurface(surface)
-
-  sdlFailIf texture.isNil: "Could not create texture from rendered text"
-
+  result.w = surface.w
+  result.h = surface.h
+  result.texture = renderer.createTextureFromSurface(surface)
+  sdlFailIf result.texture.isNIl: "Could not create texture from rendered text"
   surface.freeSurface()
-  renderer.copyEx(texture, source, dest, angle = 0.0, center = nil, flip = SDL_FLIP_NONE)
-  texture.destroy()
 
-proc renderText(game: Game, text: string, x, y: cint, color: Color) =
-  const outlineColor = color(0, 0, 0, 64)
-  game.renderer.renderText(game.font, text, x, y, outline=2, outlineColor)
-  game.renderer.renderText(game.font, text, x, y, outline=0, color)
+proc renderText(game: Game, text: string, x, y: cint, color: Color, tc: TextCache) =
+  let passes = [(color: color(0, 0, 0, 64), outline: 2.cint), (color: color, outline: 0.cint)]
+
+  if text != tc.text:
+    for i in 0..1:
+      tc.cache[i].texture.destroy()
+      tc.cache[i] = game.renderer.renderText(game.font, text, x, y, passes[i].outline, passes[i].color)
+    tc.text = text
+
+  for i in 0..1:
+    var source = rect(0, 0, tc.cache[i].w, tc.cache[i].h)
+    var dest = rect(x - passes[i].outline, y - passes[i].outline, tc.cache[i].w, tc.cache[i].h)
+    game.renderer.copyEx(tc.cache[i].texture, source, dest, angle = 0.0, center = nil)
+
 
 proc render(game: Game, tick: int) =
   game.renderer.clear()
@@ -178,11 +199,11 @@ proc render(game: Game, tick: int) =
   let time = game.player.time
   const white = color(255, 255, 255, 255)
   if time.begin >= 0:
-    game.renderText(formatTime(tick - time.begin), 50, 100, white)
+    game.rendertextCached(formatTime(tick - time.begin), 50, 100, white)
   elif time.finish >= 0:
-    game.renderText("Finished in: " & formatTime(time.finish), 50, 100, white)
+    game.rendertextCached("Finished in: " & formatTime(time.finish), 50, 100, white)
   if time.best >= 0:
-    game.renderText("Best time: " & formatTime(time.best), 50, 150, white)
+    game.rendertextCached("Best time: " & formatTime(time.best), 50, 150, white)
 
   game.renderer.present()
 
