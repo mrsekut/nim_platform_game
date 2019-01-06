@@ -1,6 +1,10 @@
 # Nim Platform Game
 
-## Build
+![sample](https://github.com/mrsekut/nim_platform_game/image/sample.gif)
+
+## Building
+
+- `nimble build` or `nim -d:release c nim_platform_game`
 
 ## How to Play
 
