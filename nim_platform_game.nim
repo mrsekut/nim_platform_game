@@ -1,6 +1,7 @@
 import sdl2
 import sdl2.image
 import basic2d
+import strutils, strformat
 
 type
   Input {.pure.} = enum none, left, right, jump, restart, quit
@@ -10,10 +11,16 @@ type
     pos: Point2d
     vel: Vector2d
 
+  Map = ref object
+    texture: TexturePtr
+    width, height: int
+    tiles: seq[uint8]
+
   Game = ref object
     inputs: array[Input, bool]
     renderer: RendererPtr
     player: Player
+    map: Map
     camera: Vector2d
 
 proc restartPlayer(player: Player) =
@@ -25,11 +32,36 @@ proc newPlayer(texture: TexturePtr): Player =
   result.texture = texture
   result.restartPlayer()
 
+proc newMap(texture: TexturePtr, file: string): Map =
+  new result
+  result.texture = texture
+  result.tiles = @[]
+
+  for line in file.lines:
+    var width = 0
+    for word in line.split(' '):
+      if word == "": continue
+      let value = parseUInt(word)
+      if value > uint(uint8.high):
+        raise ValueError.newException(fmt"Invalid value {word} in map {file}")
+      result.tiles.add value.uint8
+      inc width
+
+    if result.width > 0 and result.width != width:
+      raise ValueError.newException(fmt"Incompatible line length in map {file}")
+    result.width = width
+    inc result.height
+
 proc newGame(renderer: RendererPtr): Game =
   # TODO:
   new result
   result.renderer = renderer
   result.player = newPlayer(renderer.loadTexture("player.png"))
+  result.map = newMap(renderer.loadTexture("grass.png"), "default.map")
+
+
+
+
 
 proc renderTee(renderer: RendererPtr, texture: TexturePtr, pos: Point2d) =
   let
@@ -51,6 +83,28 @@ proc renderTee(renderer: RendererPtr, texture: TexturePtr, pos: Point2d) =
     renderer.copyEx(texture, part.source, part.dest, angle = 0.0, center = nil, flip = part.flip)
 
 
+const
+  tilePerRow = 16
+  tileSize: Point = (64.cint, 64.cint)
+
+proc renderMap(renderer: RendererPtr, map: Map, camera: Vector2d) =
+  var
+    clip = rect(0, 0, tileSize.x, tileSize.y)
+    dest = rect(0, 0, tileSize.x, tileSize.y)
+
+  for i, tileNr in map.tiles:
+    if tileNr == 0: continue
+    clip.x = cint(tileNr mod tilePerRow) * tileSize.x
+    clip.y = cint(tileNr div tilePerRow) * tileSize.y
+    dest.x = cint(i mod map.width) * tileSize.x - camera.x.cint
+    dest.y = cint(i div map.width) * tileSize.y - camera.y.cint
+
+    renderer.copy(map.texture, unsafeAddr clip, unsafeAddr dest)
+
+
+
+
+
 proc toInput(key: Scancode): Input =
   case key
   of SDL_SCANCODE_A: Input.left
@@ -70,11 +124,11 @@ proc handleInput(game: Game) =
     of KeyUp: game.inputs[event.key.keysym.scancode.toInput] = false
     else: discard
 
-# proc render(game: Game) =
-#   # TODO:
-#   game.renderer.clear()
-#   game.renderer.present()
-
+proc render(game: Game) =
+  game.renderer.clear()
+  game.renderer.renderTee(game.player.texture, game.player.pos - game.camera)
+  game.renderer.renderMap(game.map, game.camera)
+  game.renderer.present()
 
 type SDLException = object of Exception
 
@@ -89,14 +143,14 @@ proc main =
 
   sdlFailIf(not setHint("SDL_RENDER_SCALE_QUALITY", "2")):
     "Linear texture filtering could not be enabled"
-  let window = createWindow(title = "Our own 2D platformer",
+  let window = createWindow(
+    title = "Our own 2D platformer",
     x = SDL_WINDOWPOS_CENTERED, y = SDL_WINDOWPOS_CENTERED,
     w = 1280, h = 720, flags = SDL_WINDOW_SHOWN)
   sdlFailIf window.isNil: "Window could not be created"
   defer: window.destroy()
 
-  let renderer = window.createRenderer(index = -1,
-    flags = Renderer_Accelerated or Renderer_PresentVsync)
+  let renderer = window.createRenderer(index = -1, flags = Renderer_Accelerated or Renderer_PresentVsync)
   sdlFailIf renderer.isNil: "Renderer could not be created"
   defer: renderer.destroy()
   renderer.setDrawColor(r = 110, g = 132, b = 174)
@@ -110,7 +164,6 @@ proc main =
 
   while not game.inputs[Input.quit]:
     game.handleInput()
-    game.renderer.renderTee(game.player.texture, game.player.pos - game.camera)
-    game.renderer.present()
+    game.render()
 
 main()
