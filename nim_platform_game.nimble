@@ -2,7 +2,7 @@
 
 version       = "0.1.0"
 author        = "mrsekut"
-description   = "A new awesome nimble package"
+description   = "Nim platform game with SDL2"
 license       = "MIT"
 srcDir        = "src"
 
