@@ -1,7 +1,7 @@
 import sdl2
 import sdl2.image
 import basic2d
-import strutils, strformat
+import strutils, strformat, times
 
 type
   Input {.pure.} = enum none, left, right, jump, restart, quit
@@ -59,10 +59,6 @@ proc newGame(renderer: RendererPtr): Game =
   result.player = newPlayer(renderer.loadTexture("player.png"))
   result.map = newMap(renderer.loadTexture("grass.png"), "default.map")
 
-
-
-
-
 proc renderTee(renderer: RendererPtr, texture: TexturePtr, pos: Point2d) =
   let
     x = pos.x.cint
@@ -105,6 +101,10 @@ proc renderMap(renderer: RendererPtr, map: Map, camera: Vector2d) =
 
 
 
+
+
+
+
 proc toInput(key: Scancode): Input =
   case key
   of SDL_SCANCODE_A: Input.left
@@ -136,6 +136,19 @@ template sdlFailIf(cond: typed, reason: string) =
   if cond: raise SDLException.newException(
     reason & ", SDL error: " & $getError())
 
+proc physics(game: Game) =
+  if game.inputs[Input.restart]:
+    game.player.restartPlayer()
+
+  if game.inputs[Input.jump]:
+    game.player.vel.y = -21
+
+  let direction = float(game.inputs[Input.right].int - game.inputs[Input.left].int)
+
+  game.player.vel.y += 0.75
+  game.player.vel.x = clamp(0.5 * game.player.vel.x + 4.0 * direction, -8, 8)
+  game.player.pos += game.player.vel
+
 proc main =
   sdlFailIf(not sdl2.init(INIT_VIDEO or INIT_TIMER or INIT_EVENTS)):
     "SDL2 initialization failed"
@@ -160,10 +173,20 @@ proc main =
     "SDL2 Image initialization failed"
   defer: image.quit()
 
-  var game = newGame(renderer)
+  var
+    game = newGame(renderer)
+    startTime = epochTime()
+    lastTick = 0
+
 
   while not game.inputs[Input.quit]:
     game.handleInput()
+
+    let newTick = int((epochTime() - startTime) * 50)
+    for tick in lastTick+1..newTick:
+      game.physics()
+    lastTick = newTick
+
     game.render()
 
 main()
