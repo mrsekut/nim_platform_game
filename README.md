@@ -1,6 +1,6 @@
 # Nim Platform Game
 
-![sample](https://github.com/mrsekut/nim_platform_game/image/sample.gif)
+![sample](https://github.com/mrsekut/nim_platform_game/blob/master/image/sample.gif)
 
 ## Building
 
