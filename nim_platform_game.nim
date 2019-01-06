@@ -1,5 +1,3 @@
-# TODO: 左右の動き、vimに合わせよう
-
 import sdl2
 import sdl2.image
 import basic2d
@@ -14,6 +12,7 @@ type
     texture: TexturePtr
     pos: Point2d
     vel: Vector2d
+    time: Time
 
   Map = ref object
     texture: TexturePtr
@@ -27,14 +26,26 @@ type
     map: Map
     camera: Vector2d
 
+  Time = ref object
+    begin, finish, best: int
+
 proc restartPlayer(player: Player) =
   player.pos = point2d(170,500)
   player.vel = vector2d(0, 0)
+  player.time.begin = -1
+  player.time.finish = -1
+
+proc newTime: Time =
+  new result
+  result.finish = -1
+  result.best = -1
 
 proc newPlayer(texture: TexturePtr): Player =
   new result
   result.texture = texture
+  result.time = newTime()
   result.restartPlayer()
+
 
 proc newMap(texture: TexturePtr, file: string): Map =
   new result
@@ -146,11 +157,38 @@ proc getTile(map: Map, x, y: int): uint8 =
 
   map.tiles[pos]
 
+proc getTile(map: Map, pos: Point2d): uint8 =
+  map.getTile(pos.x.round.int, pos.y.round.int)
+
 proc isSolid(map: Map, x, y: int): bool =
   map.getTile(x, y) notin {air, start, finish}
 
 proc isSolid(map: Map, point: Point2d): bool =
   map.isSolid(point.x.round.int, point.y.round.int)
+
+proc formatTime(ticks: int): string =
+  let
+    mins = (ticks div 50) div 60
+    secs = (ticks div 50) mod 60
+    cents = (ticks mod 50) * 2
+
+  fmt"{mins:0>2}:{secs:0>2}:{cents:0>2}"
+
+proc logic(game: Game, tick: int) =
+  template time: expr = game.player.time
+  case game.map.getTile(game.player.pos)
+  of start:
+    time.begin = tick
+  of finish:
+    if time.begin >= 0:
+      time.finish = tick - time.begin
+      time.begin = -1
+      if time.best < 0 or time.finish < time.best:
+        time.best = time.finish
+      echo fmt"Finished in {formatTime(time.finish)}"
+  else: discard
+
+
 
 proc onGround(map: Map, pos: Point2d, size: Vector2d): bool =
   let size = size * 0.5
@@ -266,6 +304,7 @@ proc main =
     for tick in lastTick+1..newTick:
       game.physics()
       game.moveCamera()
+      game.logic(tick)
     lastTick = newTick
 
     game.render()
