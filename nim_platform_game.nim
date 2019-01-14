@@ -2,6 +2,17 @@ import
   sdl2, sdl2.image, sdl2.ttf,
   basic2d, strutils, strformat, times, math
 
+const
+  tilePerRow = 16
+  tileSize: Point = (64.cint, 64.cint)
+
+  playerSize = vector2d(64, 64)
+  windowSize: Point = (1280.cint, 720.cint)
+
+  air = 0
+  start = 78
+  finish = 110
+
 type
   SDLException = object of Exception
   Input {.pure.} = enum none, left, right, jump, restart, quit
@@ -37,31 +48,45 @@ type
     text: string
     cache: array[2, CacheLine]
 
-proc newTextCache: TextCache =
-  new result
+proc newPlayer(texture: TexturePtr): Player
+proc restartPlayer(player: Player)
 
-proc formatTime(ticks: int): string =
-  let
-    mins = (ticks div 50) div 60
-    secs = (ticks div 50) mod 60
-    cents = (ticks mod 50) * 2
+proc newMap(texture: TexturePtr, file: string): Map
+proc getTile(map: Map, x, y: int): uint8
+proc getTile(map: Map, pos: Point2d): uint8
+proc isSolid(map: Map, x, y: int): bool
+proc isSolid(map: Map, point: Point2d): bool
+proc onGround(map: Map, pos: Point2d, size: Vector2d): bool
+proc testBox(map: Map, pos: Point2d, size: Vector2d): bool
+proc moveBox(map: Map, pos: var Point2d, vel: var Vector2d, size: Vector2d): set[Collision] {.discardable.}
 
-  fmt"{mins:0>2}:{secs:0>2}:{cents:0>2}"
+proc handleInput(game: Game)
+proc renderText(game: Game, text: string, x, y: cint, color: Color, tc: TextCache)
+proc renderText(renderer: RendererPtr, font: FontPtr, text: string, x, y, outline: cint, color: Color): CacheLine
+proc render(game: Game, tick: int)
+proc logic(game: Game, tick: int)
+proc moveCamera(game: Game)
+proc physics(game: Game)
+
+proc newGame(renderer: RendererPtr): Game
+proc renderTee(renderer: RendererPtr, texture: TexturePtr, pos: Point2d)
+proc renderMap(renderer: RendererPtr, map: Map, camera: Vector2d)
+
+proc newTime: Time
+proc newTextCache: TextCache
+proc formatTime(ticks: int): string
+proc toInput(key: Scancode): Input
 
 template sdlFailIf(cond: typed, reason: string) =
   if cond: raise SDLException.newException(
     reason & ", SDL error: " & $getError())
 
-proc restartPlayer(player: Player) =
-  player.pos = point2d(170,500)
-  player.vel = vector2d(0, 0)
-  player.time.begin = -1
-  player.time.finish = -1
+template rendertextCached(game: Game, text: string, x, y: cint, color: Color) =
+  block:
+    var tc {.global.} = newTextCache()
+    game.renderText(text, x, y, color, tc)
 
-proc newTime: Time =
-  new result
-  result.finish = -1
-  result.best = -1
+# implementation
 
 proc newPlayer(texture: TexturePtr): Player =
   new result
@@ -69,6 +94,11 @@ proc newPlayer(texture: TexturePtr): Player =
   result.time = newTime()
   result.restartPlayer()
 
+proc restartPlayer(player: Player) =
+  player.pos = point2d(170,500)
+  player.vel = vector2d(0, 0)
+  player.time.begin = -1
+  player.time.finish = -1
 
 proc newMap(texture: TexturePtr, file: string): Map =
   new result
@@ -90,66 +120,67 @@ proc newMap(texture: TexturePtr, file: string): Map =
     result.width = width
     inc result.height
 
-proc newGame(renderer: RendererPtr): Game =
-  # TODO:
-  new result
-  result.renderer = renderer
-
-  result.font = openFont("DejaVuSans.ttf", 28)
-  sdlFailIf result.font.isNil: "Failed to load font"
-
-  result.player = newPlayer(renderer.loadTexture("player.png"))
-  result.map = newMap(renderer.loadTexture("grass.png"), "default.map")
-
-proc renderTee(renderer: RendererPtr, texture: TexturePtr, pos: Point2d) =
+proc getTile(map: Map, x, y: int): uint8 =
   let
-    x = pos.x.cint
-    y = pos.y.cint
+    nx = clamp(x div tileSize.x, 0, map.width-1)
+    ny = clamp(y div tileSize.y, 0, map.height-1)
+    pos = ny * map.width + nx
 
-  var bodyParts: array[8, tuple[source, dest: Rect, flip: cint]] = [
-    (rect(192,  64, 64, 32), rect(x-60,    y, 96, 48), SDL_FLIP_NONE),      # back feet shadow
-    (rect( 96,   0, 96, 96), rect(x-48, y-48, 96, 96), SDL_FLIP_NONE),      # body shadow
-    (rect(192,  64, 64, 32), rect(x-36,    y, 96, 48), SDL_FLIP_NONE),      # front feet shadow
-    (rect(192,  32, 64, 32), rect(x-60,    y, 96, 48), SDL_FLIP_NONE),      # back feet
-    (rect(  0,   0, 96, 96), rect(x-48, y-48, 96, 96), SDL_FLIP_NONE),      # body
-    (rect(192,  32, 64, 32), rect(x-36,    y, 96, 48), SDL_FLIP_NONE),      # front feet
-    (rect( 64,  96, 32, 32), rect(x-18, y-21, 36, 36), SDL_FLIP_NONE),      # left eye
-    (rect( 64,  96, 32, 32), rect( x-6, y-21, 36, 36), SDL_FLIP_HORIZONTAL) # right eye
-  ]
+  map.tiles[pos]
 
-  for part in bodyParts.mitems:
-    renderer.copyEx(texture, part.source, part.dest, angle = 0.0, center = nil, flip = part.flip)
+proc getTile(map: Map, pos: Point2d): uint8 =
+  map.getTile(pos.x.round.int, pos.y.round.int)
 
+proc isSolid(map: Map, x, y: int): bool =
+  map.getTile(x, y) notin {air, start, finish}
 
-const
-  tilePerRow = 16
-  tileSize: Point = (64.cint, 64.cint)
+proc isSolid(map: Map, point: Point2d): bool =
+  map.isSolid(point.x.round.int, point.y.round.int)
 
-proc renderMap(renderer: RendererPtr, map: Map, camera: Vector2d) =
-  var
-    clip = rect(0, 0, tileSize.x, tileSize.y)
-    dest = rect(0, 0, tileSize.x, tileSize.y)
+proc onGround(map: Map, pos: Point2d, size: Vector2d): bool =
+  let size = size * 0.5
+  result = map.isSolid(point2d(pos.x - size.x, pos.y + size.y + 1)) or
+           map.isSolid(point2d(pos.x + size.x, pos.y + size.y + 1))
 
-  for i, tileNr in map.tiles:
-    if tileNr == 0: continue
-    clip.x = cint(tileNr mod tilePerRow) * tileSize.x
-    clip.y = cint(tileNr div tilePerRow) * tileSize.y
-    dest.x = cint(i mod map.width) * tileSize.x - camera.x.cint
-    dest.y = cint(i div map.width) * tileSize.y - camera.y.cint
+proc testBox(map: Map, pos: Point2d, size: Vector2d): bool =
+  let size = size * 0.5
+  result = map.isSolid(point2d(pos.x - size.x, pos.y - size.y)) or
+           map.isSolid(point2d(pos.x + size.x, pos.y - size.y)) or
+           map.isSolid(point2d(pos.x - size.x, pos.y + size.y)) or
+           map.isSolid(point2d(pos.x + size.x, pos.y + size.y))
 
-    renderer.copy(map.texture, unsafeAddr clip, unsafeAddr dest)
+proc moveBox(map: Map, pos: var Point2d, vel: var Vector2d, size: Vector2d): set[Collision] {.discardable.} =
+  let
+    distance = vel.len
+    maximum = distance.int
+  if distance < 0: return
+  let fraction = 1.0 / float(maximum + 1)
 
-proc toInput(key: Scancode): Input =
-  case key
-  of SDL_SCANCODE_H: Input.left
-  of SDL_SCANCODE_L: Input.right
-  of SDL_SCANCODE_SPACE: Input.jump
-  of SDL_SCANCODE_R: Input.restart
-  of SDL_SCANCODE_Q: Input.quit
-  else: Input.none
+  for i in 0..maximum:
+    var newPos = pos + vel * fraction
+    if map.testBox(newPos, size):
+      var hit = false
+
+      if map.testBox(point2d(pos.x, newPos.y), size):
+        result.incl Collision.y
+        newPos.y = pos.y
+        vel.y = 0
+        hit = true
+
+      if map.testBox(point2d(newPos.x, pos.y), size):
+        result.incl Collision.x
+        newPos.x = pos.x
+        vel.x = 0
+        hit = true
+
+      if not hit:
+        result.incl Collision.corner
+        newPos = pos
+        vel = vector2d(0, 0)
+
+    pos = newPos
 
 proc handleInput(game: Game) =
-  # TODO:
   var event = defaultEvent
   while pollEvent(event):
     case event.kind
@@ -157,11 +188,6 @@ proc handleInput(game: Game) =
     of KeyDown: game.inputs[event.key.keysym.scancode.toInput] = true
     of KeyUp: game.inputs[event.key.keysym.scancode.toInput] = false
     else: discard
-
-template rendertextCached(game: Game, text: string, x, y: cint, color: Color) =
-  block:
-    var tc {.global.} = newTextCache()
-    game.renderText(text, x, y, color, tc)
 
 proc renderText(renderer: RendererPtr, font: FontPtr, text: string, x, y, outline: cint, color: Color): CacheLine =
   font.setFontOutline(outline)
@@ -190,7 +216,6 @@ proc renderText(game: Game, text: string, x, y: cint, color: Color, tc: TextCach
     var dest = rect(x - passes[i].outline, y - passes[i].outline, tc.cache[i].w, tc.cache[i].h)
     game.renderer.copyEx(tc.cache[i].texture, source, dest, angle = 0.0, center = nil)
 
-
 proc render(game: Game, tick: int) =
   game.renderer.clear()
   game.renderer.renderTee(game.player.texture, game.player.pos - game.camera)
@@ -207,32 +232,6 @@ proc render(game: Game, tick: int) =
 
   game.renderer.present()
 
-const
-  playerSize = vector2d(64, 64)
-  windowSize: Point = (1280.cint, 720.cint)
-
-  air = 0
-  start = 78
-  finish = 110
-
-proc getTile(map: Map, x, y: int): uint8 =
-  let
-    nx = clamp(x div tileSize.x, 0, map.width-1)
-    ny = clamp(y div tileSize.y, 0, map.height-1)
-    pos = ny * map.width + nx
-
-  map.tiles[pos]
-
-proc getTile(map: Map, pos: Point2d): uint8 =
-  map.getTile(pos.x.round.int, pos.y.round.int)
-
-proc isSolid(map: Map, x, y: int): bool =
-  map.getTile(x, y) notin {air, start, finish}
-
-proc isSolid(map: Map, point: Point2d): bool =
-  map.isSolid(point.x.round.int, point.y.round.int)
-
-
 proc logic(game: Game, tick: int) =
   template time: expr = game.player.time
   case game.map.getTile(game.player.pos)
@@ -247,55 +246,6 @@ proc logic(game: Game, tick: int) =
       echo fmt"Finished in {formatTime(time.finish)}"
   else: discard
 
-
-
-proc onGround(map: Map, pos: Point2d, size: Vector2d): bool =
-  let size = size * 0.5
-  result = map.isSolid(point2d(pos.x - size.x, pos.y + size.y + 1)) or
-           map.isSolid(point2d(pos.x + size.x, pos.y + size.y + 1))
-
-proc testBox(map: Map, pos: Point2d, size: Vector2d): bool =
-  let size = size * 0.5
-  result = map.isSolid(point2d(pos.x - size.x, pos.y - size.y)) or
-           map.isSolid(point2d(pos.x + size.x, pos.y - size.y)) or
-           map.isSolid(point2d(pos.x - size.x, pos.y + size.y)) or
-           map.isSolid(point2d(pos.x + size.x, pos.y + size.y))
-
-proc moveBox(map: Map, pos: var Point2d, vel: var Vector2d, size: Vector2d): set[Collision] {.discardable.} =
-  # TODO:
-  let
-    distance = vel.len
-    maximum = distance.int
-
-  if distance < 0: return
-
-  let fraction = 1.0 / float(maximum + 1)
-
-  for i in 0..maximum:
-    var newPos = pos + vel * fraction
-
-    if map.testBox(newPos, size):
-      var hit = false
-
-      if map.testBox(point2d(pos.x, newPos.y), size):
-        result.incl Collision.y
-        newPos.y = pos.y
-        vel.y = 0
-        hit = true
-
-      if map.testBox(point2d(newPos.x, pos.y), size):
-        result.incl Collision.x
-        newPos.x = pos.x
-        vel.x = 0
-        hit = true
-
-      if not hit:
-        result.incl Collision.corner
-        newPos = pos
-        vel = vector2d(0, 0)
-
-    pos = newPos
-
 proc moveCamera(game: Game) =
   const halfWin = float(windowSize.x div 2)
   let
@@ -304,19 +254,16 @@ proc moveCamera(game: Game) =
 
   game.camera.x = clamp(game.camera.x, leftArea, rightArea)
 
-
 proc physics(game: Game) =
   if game.inputs[Input.restart]:
     game.player.restartPlayer()
 
   let ground = game.map.onGround(game.player.pos, playerSize)
-
   if game.inputs[Input.jump]:
     if ground:
       game.player.vel.y = -21
 
   let direction = float(game.inputs[Input.right].int - game.inputs[Input.left].int)
-
   game.player.vel.y += 0.75
   if ground:
     game.player.vel.x = 0.5 * game.player.vel.x + 2.0 * direction
@@ -325,6 +272,73 @@ proc physics(game: Game) =
 
   game.player.vel.x = clamp(0.5 * game.player.vel.x + 4.0 * direction, -8, 8)
   game.map.moveBox(game.player.pos, game.player.vel, playerSize)
+
+proc newGame(renderer: RendererPtr): Game =
+  new result
+  result.renderer = renderer
+  result.font = openFont("DejaVuSans.ttf", 28)
+  sdlFailIf result.font.isNil: "Failed to load font"
+
+  result.player = newPlayer(renderer.loadTexture("player.png"))
+  result.map = newMap(renderer.loadTexture("grass.png"), "default.map")
+
+proc renderTee(renderer: RendererPtr, texture: TexturePtr, pos: Point2d) =
+  let
+    x = pos.x.cint
+    y = pos.y.cint
+
+  var bodyParts: array[8, tuple[source, dest: Rect, flip: cint]] = [
+    (rect(192,  64, 64, 32), rect(x-60,    y, 96, 48), SDL_FLIP_NONE),      # back feet shadow
+    (rect( 96,   0, 96, 96), rect(x-48, y-48, 96, 96), SDL_FLIP_NONE),      # body shadow
+    (rect(192,  64, 64, 32), rect(x-36,    y, 96, 48), SDL_FLIP_NONE),      # front feet shadow
+    (rect(192,  32, 64, 32), rect(x-60,    y, 96, 48), SDL_FLIP_NONE),      # back feet
+    (rect(  0,   0, 96, 96), rect(x-48, y-48, 96, 96), SDL_FLIP_NONE),      # body
+    (rect(192,  32, 64, 32), rect(x-36,    y, 96, 48), SDL_FLIP_NONE),      # front feet
+    (rect( 64,  96, 32, 32), rect(x-18, y-21, 36, 36), SDL_FLIP_NONE),      # left eye
+    (rect( 64,  96, 32, 32), rect( x-6, y-21, 36, 36), SDL_FLIP_HORIZONTAL) # right eye
+  ]
+
+  for part in bodyParts.mitems:
+    renderer.copyEx(texture, part.source, part.dest, angle = 0.0, center = nil, flip = part.flip)
+
+proc renderMap(renderer: RendererPtr, map: Map, camera: Vector2d) =
+  var
+    clip = rect(0, 0, tileSize.x, tileSize.y)
+    dest = rect(0, 0, tileSize.x, tileSize.y)
+
+  for i, tileNr in map.tiles:
+    if tileNr == 0: continue
+    clip.x = cint(tileNr mod tilePerRow) * tileSize.x
+    clip.y = cint(tileNr div tilePerRow) * tileSize.y
+    dest.x = cint(i mod map.width) * tileSize.x - camera.x.cint
+    dest.y = cint(i div map.width) * tileSize.y - camera.y.cint
+
+    renderer.copy(map.texture, unsafeAddr clip, unsafeAddr dest)
+
+proc newTime: Time =
+  new result
+  result.finish = -1
+  result.best = -1
+
+proc newTextCache: TextCache =
+  new result
+
+proc formatTime(ticks: int): string =
+  let
+    mins = (ticks div 50) div 60
+    secs = (ticks div 50) mod 60
+    cents = (ticks mod 50) * 2
+
+  fmt"{mins:0>2}:{secs:0>2}:{cents:0>2}"
+
+proc toInput(key: Scancode): Input =
+  case key
+  of SDL_SCANCODE_H: Input.left
+  of SDL_SCANCODE_L: Input.right
+  of SDL_SCANCODE_SPACE: Input.jump
+  of SDL_SCANCODE_R: Input.restart
+  of SDL_SCANCODE_Q: Input.quit
+  else: Input.none
 
 proc main =
   sdlFailIf(not sdl2.init(INIT_VIDEO or INIT_TIMER or INIT_EVENTS)):
@@ -357,7 +371,6 @@ proc main =
     game = newGame(renderer)
     startTime = epochTime()
     lastTick = 0
-
 
   while not game.inputs[Input.quit]:
     game.handleInput()
