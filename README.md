@@ -4,7 +4,11 @@
 
 ## Building
 
-- `nimble build` or `nim -d:release c nim_platform_game`
+- `$ nimble build` or `$ nim -d:release c nim_platform_game`
+
+## Run
+
+- `$ ./nim_platform_game`
 
 ## How to Play
 
